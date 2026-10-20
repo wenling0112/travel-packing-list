@@ -31,6 +31,16 @@
 
 BR-09 維持不變：不提供修改 Trip 條件或重新推薦的 API。總計六個 Operations、四個不同 Path，維持 Trip、PackingItem 兩個 Entity。
 
+成功回應格式摘要：
+
+| 操作 | Response Schema | 回應內容 |
+| --- | --- | --- |
+| 建立旅遊計畫 | CreateTripResponse | `{trip, items}`，含計畫與完整初始推薦 |
+| 查詢清單 | ItemListResponse | `{tripId, items}`，含目前完整清單 |
+| 新增／修改項目 | PackingItem | 直接回傳完整項目 |
+| 刪除項目 | 無 | HTTP 204，無回應內容 |
+| 查詢進度 | ProgressResponse | `tripId`、三項計數、`completion_rate`、`unpacked_items` |
+
 ## 3. POST /trips：建立旅遊計畫與推薦清單
 
 Request Body：`CreateTripRequest`，四項皆必填。
@@ -101,7 +111,7 @@ Path Parameters：必填 `tripId`、`itemId`（UUID）。Request Body：`UpdateP
 {"quantity":4,"is_packed":true}
 ```
 
-HTTP 200 直接回傳更新後的 `PackingItem`。只更新提供的欄位；未提供的欄位與原始原因保持不變。內容修改不自動重設準備狀態，系統也不重新套用推薦覆寫修改結果。這是本專案的 JSON 部分更新格式，不採用 JSON Patch 操作陣列。
+HTTP 200 直接回傳更新後的 `PackingItem`。只更新提供的欄位；未提供的欄位與原始原因保持不變。僅修改名稱、數量或單位時，不自動重設準備狀態；若提供 `is_packed`，則依輸入更新。系統不重新套用推薦覆寫修改結果。這是本專案的 JSON 部分更新格式，不採用 JSON Patch 操作陣列。
 
 空物件、未知／不可寫欄位、null、不合法型別或值、與另一項目同名皆回傳 400，整筆修改不生效。判斷同名時排除自身。計畫、項目不存在或項目不屬於指定計畫皆回傳 404。
 
@@ -123,10 +133,10 @@ Path Parameter：必填 `tripId`（UUID），無 Request Body。HTTP 200 回傳 
 | total_count | integer ≥ 0 | 目前全部項目數 |
 | packed_count | integer ≥ 0 | 已準備項目數 |
 | unpacked_count | integer ≥ 0 | 未準備項目數 |
-| completion_rate | number，0～100 | 完成率百分比，70 表示 70% |
+| completion_rate | number，0～100 | 完成率百分比，四捨五入至小數點後兩位；70 表示 70% |
 | unpacked_items | PackingItem[] | 目前 is_packed = false 的完整項目 |
 
-`total_count = packed_count + unpacked_count`，`unpacked_count = unpacked_items.length`。完成率為 `packed_count / total_count × 100`；空清單時為 0。以項目數計算，不依 quantity 加權，不規定固定顯示小數位數。
+`total_count = packed_count + unpacked_count`，`unpacked_count = unpacked_items.length`。完成率以 `packed_count / total_count × 100` 計算後，四捨五入至小數點後兩位；空清單時為 0。以項目數計算，不依 quantity 加權。不要求補零，例如 3 / 9 回傳 `33.33`、2 / 3 回傳 `66.67`、7 / 10 回傳 `70`。
 
 每次查詢依目前清單產生一致的計數與未準備清單。新增未準備項目後分母增加，刪除項目後移除相應計數；僅改名稱、數量或單位不影響完成率。
 

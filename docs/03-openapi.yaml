@@ -142,7 +142,8 @@ paths:
         JSON 物件部分更新，不是 JSON Patch 操作陣列。
         至少提供 name、quantity、unit、is_packed 其中一項，未提供的欄位保持不變。
         名稱及單位儲存前去除前後空白，同名檢查排除自身。
-        不重設準備狀態、不修改 reason、不重新推薦或覆寫修改結果。
+        僅修改名稱、數量或單位時，不自動重設準備狀態；若提供 is_packed，則依輸入更新。
+        不修改 reason，不重新推薦或覆寫修改結果。
         驗證失敗整筆修改不生效；找不到項目或項目不屬於指定計畫回傳 404。
       requestBody:
         required: true
@@ -199,8 +200,9 @@ paths:
       description: |-
         FR-04；BR-08。依目前項目數計算，不依 quantity 加權。
         total_count = packed_count + unpacked_count；unpacked_count = unpacked_items.length。
-        completion_rate = packed_count / total_count * 100，空清單為 0。
-        所有計數與未準備清單須反映同一份目前清單；不規定固定顯示小數位數。
+        completion_rate 以 packed_count / total_count * 100 計算後，四捨五入至小數點後兩位，空清單為 0。
+        不要求補零，例如 3 / 9 回傳 33.33、2 / 3 回傳 66.67、7 / 10 回傳 70。
+        所有計數與未準備清單須反映同一份目前清單。
       responses:
         '200':
           description: 目前準備進度
@@ -397,7 +399,9 @@ components:
           type: number
           minimum: 0
           maximum: 100
-          description: 以項目數計算的百分比；70 表示 70%，空清單為 0
+          multipleOf: 0.01
+          description: 以項目數計算的百分比，四捨五入至小數點後兩位；不要求補零，70 表示 70%，空清單為 0
+          examples: [33.33, 66.67, 70, 0]
         unpacked_items:
           type: array
           description: 目前所有 is_packed 為 false 的項目，數量等於 unpacked_count
