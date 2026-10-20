@@ -1,0 +1,510 @@
+openapi: 3.1.0
+info:
+  title: 旅遊行李清單管理系統(Travel Packing List)
+  version: 0.1.0
+  description: |-
+    Design Only，尚未實作。六個 Operations，僅使用 Trip 與 PackingItem 兩個 Entity。
+    根據 days、climate、activity、region 產生初始推薦，再支援個人清單調整與準備追蹤。
+    不提供登入、外部 API、修改旅遊條件或重新推薦功能。
+    簽證確認僅提醒自行確認需求，不代表系統判定是否需要簽證。
+    Request 不接受未知欄位、null 或字串至數字／Boolean 的自動轉型。
+    格式不合法回傳 400，資源不存在或項目所屬計畫不符回傳 404。
+    所有範例皆為模擬資料，未指定已部署的 Server。
+security: []
+tags:
+  - name: Trips
+    description: 建立旅遊計畫與初始推薦
+  - name: PackingItems
+    description: 查詢與調整當次旅行清單
+  - name: Progress
+    description: 由目前清單計算準備進度，不是獨立 Entity
+paths:
+  /trips:
+    post:
+      tags: [Trips]
+      operationId: createTrip
+      summary: 建立旅遊計畫並產生推薦清單
+      description: |-
+        FR-01、FR-02；BR-01～BR-07、BR-10、BR-11。
+        依四項條件推薦，所有初始項目 is_packed 為 false。
+        上衣 days 件、褲子 ceil(days/2) 件、內衣褲 days+1 套。
+        COLD 加保暖外套 1 件；RAINY 加雨具 1 件；BEACH 加泳衣 1 套；
+        HIKING 加登山鞋 1 雙及登山背包 1 個。WARM、SIGHTSEEING 不另加專屬用品。
+        DOMESTIC 加身分證件 1 張及健保卡 1 張；INTERNATIONAL 加護照 1 本、
+        簽證確認 1 項及旅行轉接插頭 1 個；兩種類型皆加充電器 1 個。
+        簽證確認僅提醒使用者自行確認需求。相同物品只保留一筆，數量取最大值。
+        Trip 與全部項目須一起建立；非預期失敗回傳 500，不保留部分建立結果。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTripRequest'
+            examples:
+              domestic:
+                summary: 五天國內寒冷登山
+                value: {days: 5, climate: COLD, activity: HIKING, region: DOMESTIC}
+              international:
+                summary: 五天國外寒冷登山
+                value: {days: 5, climate: COLD, activity: HIKING, region: INTERNATIONAL}
+      responses:
+        '201':
+          description: 計畫與全部初始項目建立成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateTripResponse'
+              examples:
+                domestic:
+                  $ref: '#/components/examples/DomesticTripCreated'
+                international:
+                  $ref: '#/components/examples/InternationalTripCreated'
+        '400':
+          $ref: '#/components/responses/TripBadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /trips/{tripId}/items:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [PackingItems]
+      operationId: listPackingItems
+      summary: 查詢目前完整行李清單
+      description: |-
+        FR-03。回傳推薦及手動新增的目前項目，不重新推薦、不補回刪除項目。
+        不分頁、不保證順序；計畫存在但無項目時回傳 200 與空陣列。
+      responses:
+        '200':
+          description: 目前清單
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemListResponse'
+              examples:
+                adjusted:
+                  summary: 使用者刪除其他項目後，只保留手動新增物品
+                  value:
+                    tripId: 11111111-1111-4111-8111-111111111111
+                    items:
+                      - {itemId: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa, tripId: 11111111-1111-4111-8111-111111111111, name: 個人藥品, quantity: 1, unit: 份, reason: 使用者自行新增, is_packed: false}
+                empty:
+                  summary: 計畫存在，項目已全部刪除
+                  value: {tripId: 11111111-1111-4111-8111-111111111111, items: []}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/TripNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [PackingItems]
+      operationId: createPackingItem
+      summary: 手動新增行李項目
+      description: |-
+        FR-05；BR-07、BR-08、BR-12～BR-14。
+        只接受 name、quantity、unit；儲存前去除名稱及單位的前後空白。
+        同計畫名稱完全相同回傳 400，不自動合併。
+        itemId 由系統產生、tripId 取自路徑，reason 固定為「使用者自行新增」，
+        is_packed 固定為 false，這些欄位不可由 Request 指定。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePackingItemRequest'
+            example: {name: 個人藥品, quantity: 1, unit: 份}
+      responses:
+        '201':
+          description: 手動項目建立成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackingItem'
+              examples:
+                manualItem:
+                  $ref: '#/components/examples/ManualItem'
+        '400':
+          $ref: '#/components/responses/ItemBadRequest'
+        '404':
+          $ref: '#/components/responses/TripNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /trips/{tripId}/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - $ref: '#/components/parameters/ItemId'
+    patch:
+      tags: [PackingItems]
+      operationId: updatePackingItem
+      summary: 修改物品內容或準備狀態
+      description: |-
+        FR-03、FR-06；BR-08、BR-12～BR-14。
+        JSON 物件部分更新，不是 JSON Patch 操作陣列。
+        至少提供 name、quantity、unit、is_packed 其中一項，未提供的欄位保持不變。
+        名稱及單位儲存前去除前後空白，同名檢查排除自身。
+        不重設準備狀態、不修改 reason、不重新推薦或覆寫修改結果。
+        驗證失敗整筆修改不生效；找不到項目或項目不屬於指定計畫回傳 404。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePackingItemRequest'
+            examples:
+              statusOnly:
+                summary: 僅標記已準備
+                value: {is_packed: true}
+              contentAndStatus:
+                summary: 將上衣改為四件並標記完成
+                value: {quantity: 4, is_packed: true}
+      responses:
+        '200':
+          description: 修改成功，回傳完整項目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackingItem'
+              example: {itemId: 10000000-0000-4000-8000-000000000001, tripId: 11111111-1111-4111-8111-111111111111, name: 上衣, quantity: 4, unit: 件, reason: 根據旅遊天數, is_packed: true}
+        '400':
+          $ref: '#/components/responses/ItemBadRequest'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [PackingItems]
+      operationId: deletePackingItem
+      summary: 刪除行李項目
+      description: |-
+        FR-07；BR-08、BR-14。可刪除任何項目，包括系統推薦文件及用品。
+        刪除後不自動補回、不提供復原，可刪除全部項目。
+        找不到項目、所屬計畫不符或重複刪除皆回傳 404。
+        後續清單及進度查詢須反映刪除結果。
+      responses:
+        '204':
+          description: 刪除成功，無回應內容
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /trips/{tripId}/progress:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [Progress]
+      operationId: getPackingProgress
+      summary: 查詢行李準備進度
+      description: |-
+        FR-04；BR-08。依目前項目數計算，不依 quantity 加權。
+        total_count = packed_count + unpacked_count；unpacked_count = unpacked_items.length。
+        completion_rate = packed_count / total_count * 100，空清單為 0。
+        所有計數與未準備清單須反映同一份目前清單；不規定固定顯示小數位數。
+      responses:
+        '200':
+          description: 目前準備進度
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressResponse'
+              examples:
+                partial:
+                  summary: 10 項中已完成 7 項，剩餘三項國外用品
+                  value:
+                    tripId: 22222222-2222-4222-8222-222222222222
+                    total_count: 10
+                    packed_count: 7
+                    unpacked_count: 3
+                    completion_rate: 70
+                    unpacked_items:
+                      - {itemId: 20000000-0000-4000-8000-000000000007, tripId: 22222222-2222-4222-8222-222222222222, name: 護照, quantity: 1, unit: 本, reason: 國外旅遊, is_packed: false}
+                      - {itemId: 20000000-0000-4000-8000-000000000008, tripId: 22222222-2222-4222-8222-222222222222, name: 簽證確認, quantity: 1, unit: 項, reason: 國外旅遊：請自行確認簽證需求, is_packed: false}
+                      - {itemId: 20000000-0000-4000-8000-000000000009, tripId: 22222222-2222-4222-8222-222222222222, name: 旅行轉接插頭, quantity: 1, unit: 個, reason: 國外旅遊, is_packed: false}
+                empty:
+                  summary: 全部項目刪除後
+                  value: {tripId: 11111111-1111-4111-8111-111111111111, total_count: 0, packed_count: 0, unpacked_count: 0, completion_rate: 0, unpacked_items: []}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/TripNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      description: Trip.id；格式錯誤為 400，計畫不存在為 404
+      schema:
+        $ref: '#/components/schemas/Uuid'
+      example: 11111111-1111-4111-8111-111111111111
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      description: PackingItem.id；格式錯誤為 400，不存在或所屬計畫不符為 404
+      schema:
+        $ref: '#/components/schemas/Uuid'
+      example: 10000000-0000-4000-8000-000000000001
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    TravelDays:
+      type: integer
+      minimum: 1
+      maximum: 30
+    Climate:
+      type: string
+      enum: [WARM, COLD, RAINY]
+    Activity:
+      type: string
+      enum: [SIGHTSEEING, BEACH, HIKING]
+    TravelRegion:
+      type: string
+      enum: [DOMESTIC, INTERNATIONAL]
+      description: DOMESTIC 為國內旅遊，INTERNATIONAL 為國外旅遊；必選一種
+    NonBlankText:
+      type: string
+      minLength: 1
+      pattern: '\S'
+      description: 至少含一個非空白字元；Service 儲存前去除前後空白
+    Quantity:
+      type: integer
+      minimum: 1
+      description: 目前數量；初始為推薦或手動新增數量，可由使用者修改
+    CreateTripRequest:
+      type: object
+      additionalProperties: false
+      required: [days, climate, activity, region]
+      properties:
+        days:
+          $ref: '#/components/schemas/TravelDays'
+        climate:
+          $ref: '#/components/schemas/Climate'
+        activity:
+          $ref: '#/components/schemas/Activity'
+        region:
+          $ref: '#/components/schemas/TravelRegion'
+    Trip:
+      type: object
+      additionalProperties: false
+      required: [tripId, days, climate, activity, region]
+      properties:
+        tripId:
+          $ref: '#/components/schemas/Uuid'
+          description: 對應 Trip.id
+        days:
+          $ref: '#/components/schemas/TravelDays'
+        climate:
+          $ref: '#/components/schemas/Climate'
+        activity:
+          $ref: '#/components/schemas/Activity'
+        region:
+          $ref: '#/components/schemas/TravelRegion'
+    PackingItem:
+      type: object
+      additionalProperties: false
+      required: [itemId, tripId, name, quantity, unit, reason, is_packed]
+      properties:
+        itemId:
+          $ref: '#/components/schemas/Uuid'
+          description: 對應 PackingItem.id
+        tripId:
+          $ref: '#/components/schemas/Uuid'
+          description: 對應 PackingItem.trip_id
+        name:
+          $ref: '#/components/schemas/NonBlankText'
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+        unit:
+          $ref: '#/components/schemas/NonBlankText'
+        reason:
+          type: string
+          minLength: 1
+          description: 原始推薦原因；手動新增固定為「使用者自行新增」，修改時保留
+        is_packed:
+          type: boolean
+          description: 新推薦或手動新增項目初始為 false，後續可更新
+    CreateTripResponse:
+      type: object
+      additionalProperties: false
+      required: [trip, items]
+      properties:
+        trip:
+          $ref: '#/components/schemas/Trip'
+        items:
+          type: array
+          minItems: 1
+          description: 完整初始推薦，不包含重複物品，全部歸屬回應中的 Trip
+          items:
+            $ref: '#/components/schemas/PackingItem'
+    ItemListResponse:
+      type: object
+      additionalProperties: false
+      required: [tripId, items]
+      properties:
+        tripId:
+          $ref: '#/components/schemas/Uuid'
+        items:
+          type: array
+          description: 目前完整清單，可為空，不保證順序
+          items:
+            $ref: '#/components/schemas/PackingItem'
+    CreatePackingItemRequest:
+      type: object
+      additionalProperties: false
+      required: [name, quantity, unit]
+      properties:
+        name:
+          $ref: '#/components/schemas/NonBlankText'
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+        unit:
+          $ref: '#/components/schemas/NonBlankText'
+    UpdatePackingItemRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          $ref: '#/components/schemas/NonBlankText'
+        quantity:
+          $ref: '#/components/schemas/Quantity'
+        unit:
+          $ref: '#/components/schemas/NonBlankText'
+        is_packed:
+          type: boolean
+    ProgressResponse:
+      type: object
+      additionalProperties: false
+      required: [tripId, total_count, packed_count, unpacked_count, completion_rate, unpacked_items]
+      properties:
+        tripId:
+          $ref: '#/components/schemas/Uuid'
+        total_count:
+          type: integer
+          minimum: 0
+        packed_count:
+          type: integer
+          minimum: 0
+        unpacked_count:
+          type: integer
+          minimum: 0
+        completion_rate:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: 以項目數計算的百分比；70 表示 70%，空清單為 0
+        unpacked_items:
+          type: array
+          description: 目前所有 is_packed 為 false 的項目，數量等於 unpacked_count
+          items:
+            $ref: '#/components/schemas/PackingItem'
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_REQUEST, DUPLICATE_ITEM_NAME, TRIP_NOT_FOUND, ITEM_NOT_FOUND, INTERNAL_ERROR]
+        message:
+          type: string
+          minLength: 1
+          description: 可讀錯誤說明，文字不作為固定字串契約
+  responses:
+    TripBadRequest:
+      description: 建立計畫的必填條件、型別、範圍、Enum、JSON 或欄位白名單驗證失敗
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidRegion:
+              summary: region 缺漏、null、型別錯誤或非法 Enum
+              value: {code: INVALID_REQUEST, message: region 必填，僅接受 DOMESTIC 或 INTERNATIONAL}
+            invalidDays:
+              value: {code: INVALID_REQUEST, message: days 必須為 1～30 的整數}
+    BadRequest:
+      description: 請求 JSON、UUID、必填欄位、型別、範圍、Enum 或欄位白名單驗證失敗，不改動資料
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidUuid:
+              value: {code: INVALID_REQUEST, message: 路徑識別碼必須符合 UUID 格式}
+    ItemBadRequest:
+      description: 不合法欄位／型別／值、空 PATCH、UUID 格式錯誤或同名衝突，原資料不變
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidInput:
+              value: {code: INVALID_REQUEST, message: 名稱與單位不可空白，數量須為正整數；PATCH 至少提供一個允許欄位}
+            duplicateName:
+              value: {code: DUPLICATE_ITEM_NAME, message: 此旅遊計畫已有同名物品}
+            forbiddenField:
+              value: {code: INVALID_REQUEST, message: 請求包含未知或不可寫欄位}
+    TripNotFound:
+      description: 指定旅遊計畫不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {code: TRIP_NOT_FOUND, message: 找不到指定旅遊計畫}
+    ResourceNotFound:
+      description: 計畫不存在，或項目不存在／不屬於指定計畫
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            tripMissing:
+              value: {code: TRIP_NOT_FOUND, message: 找不到指定旅遊計畫}
+            itemMissingOrMismatched:
+              value: {code: ITEM_NOT_FOUND, message: 找不到指定計畫中的行李項目}
+    InternalError:
+      description: 非預期處理失敗，不回傳內部例外細節；建立計畫失敗不保留部分結果
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {code: INTERNAL_ERROR, message: 系統暫時無法完成操作}
+  examples:
+    ManualItem:
+      summary: 手動新增，原因由系統設定
+      value: {itemId: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa, tripId: 11111111-1111-4111-8111-111111111111, name: 個人藥品, quantity: 1, unit: 份, reason: 使用者自行新增, is_packed: false}
+    DomesticTripCreated:
+      summary: 五天國內寒冷登山，完整九項初始清單
+      value:
+        trip: {tripId: 11111111-1111-4111-8111-111111111111, days: 5, climate: COLD, activity: HIKING, region: DOMESTIC}
+        items:
+          - {itemId: 10000000-0000-4000-8000-000000000001, tripId: 11111111-1111-4111-8111-111111111111, name: 上衣, quantity: 5, unit: 件, reason: 根據旅遊天數, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000002, tripId: 11111111-1111-4111-8111-111111111111, name: 褲子, quantity: 3, unit: 件, reason: 根據旅遊天數, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000003, tripId: 11111111-1111-4111-8111-111111111111, name: 內衣褲, quantity: 6, unit: 套, reason: 根據旅遊天數, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000004, tripId: 11111111-1111-4111-8111-111111111111, name: 保暖外套, quantity: 1, unit: 件, reason: 寒冷氣候, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000005, tripId: 11111111-1111-4111-8111-111111111111, name: 登山鞋, quantity: 1, unit: 雙, reason: 登山活動, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000006, tripId: 11111111-1111-4111-8111-111111111111, name: 登山背包, quantity: 1, unit: 個, reason: 登山活動, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000007, tripId: 11111111-1111-4111-8111-111111111111, name: 身分證件, quantity: 1, unit: 張, reason: 國內旅遊, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000008, tripId: 11111111-1111-4111-8111-111111111111, name: 健保卡, quantity: 1, unit: 張, reason: 國內旅遊, is_packed: false}
+          - {itemId: 10000000-0000-4000-8000-000000000009, tripId: 11111111-1111-4111-8111-111111111111, name: 充電器, quantity: 1, unit: 個, reason: 共同必備用品, is_packed: false}
+    InternationalTripCreated:
+      summary: 五天國外寒冷登山，完整十項初始清單
+      value:
+        trip: {tripId: 22222222-2222-4222-8222-222222222222, days: 5, climate: COLD, activity: HIKING, region: INTERNATIONAL}
+        items:
+          - {itemId: 20000000-0000-4000-8000-000000000001, tripId: 22222222-2222-4222-8222-222222222222, name: 上衣, quantity: 5, unit: 件, reason: 根據旅遊天數, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000002, tripId: 22222222-2222-4222-8222-222222222222, name: 褲子, quantity: 3, unit: 件, reason: 根據旅遊天數, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000003, tripId: 22222222-2222-4222-8222-222222222222, name: 內衣褲, quantity: 6, unit: 套, reason: 根據旅遊天數, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000004, tripId: 22222222-2222-4222-8222-222222222222, name: 保暖外套, quantity: 1, unit: 件, reason: 寒冷氣候, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000005, tripId: 22222222-2222-4222-8222-222222222222, name: 登山鞋, quantity: 1, unit: 雙, reason: 登山活動, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000006, tripId: 22222222-2222-4222-8222-222222222222, name: 登山背包, quantity: 1, unit: 個, reason: 登山活動, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000007, tripId: 22222222-2222-4222-8222-222222222222, name: 護照, quantity: 1, unit: 本, reason: 國外旅遊, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000008, tripId: 22222222-2222-4222-8222-222222222222, name: 簽證確認, quantity: 1, unit: 項, reason: 國外旅遊：請自行確認簽證需求, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000009, tripId: 22222222-2222-4222-8222-222222222222, name: 旅行轉接插頭, quantity: 1, unit: 個, reason: 國外旅遊, is_packed: false}
+          - {itemId: 20000000-0000-4000-8000-000000000010, tripId: 22222222-2222-4222-8222-222222222222, name: 充電器, quantity: 1, unit: 個, reason: 共同必備用品, is_packed: false}

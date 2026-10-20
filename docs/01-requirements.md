@@ -258,4 +258,4 @@ Acceptance Criteria：
 | FR-06 | BR-08、BR-12、BR-13、BR-14 | PATCH `/trips/{tripId}/items/{itemId}` |
 | FR-07 | BR-08、BR-14 | DELETE `/trips/{tripId}/items/{itemId}` |
 
-詳細 API、OpenAPI 與架構文件將於後續階段撰寫；本文件的驗收條件為設計依據，尚未執行系統測試。
+詳細介面見 [API Design](02-api-design.md) 與 [OpenAPI](03-openapi.yaml)，架構文件將於後續階段撰寫。本文件的驗收條件為設計依據，尚未執行系統測試。

@@ -63,9 +63,9 @@ Out of Scope：登入與權限、國家／簽證／天氣或其他外部 API、�
 | --- | --- | --- |
 | 1 | README.md（本文件） | 題目、亮點、流程與設計狀態 |
 | 2 | [docs/01-requirements.md](docs/01-requirements.md) | 問題、使用者、情境、範圍、FR、BR 與驗收條件 |
-| 3 | `docs/02-api-design.md` | RESTful API 設計；待撰寫 |
-| 4 | `docs/03-openapi.yaml` | OpenAPI 3.1.0 契約；待撰寫 |
+| 3 | [docs/02-api-design.md](docs/02-api-design.md) | 六條 API、欄位、狀態碼及需求對應 |
+| 4 | [docs/03-openapi.yaml](docs/03-openapi.yaml) | OpenAPI 3.1.0 契約、Schema 及模擬範例 |
 | 5 | `docs/04-architecture-data-model.md` | 架構、資料模型與追蹤對應；待撰寫 |
-| 6 | `docs/05-ai-collaboration.md` | 真實 AI 協作與決策紀錄；待撰寫 |
+| 6 | [docs/05-ai-collaboration.md](docs/05-ai-collaboration.md) | 已發生的 AI 協作、學生修正與一致性檢查；持續補充 |
 
 後續文件完成後再補上連結。專案使用 [GitHub Repository](https://github.com/wenling0112/travel-packing-list) 進行文件版本管理。
