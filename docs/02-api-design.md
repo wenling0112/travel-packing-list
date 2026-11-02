@@ -11,10 +11,10 @@
 | Progress（`/trips/{tripId}/progress`） | 由目前清單計算的進度表示，不是新 Entity |
 
 - Request／Response 使用 JSON（`application/json`）；DELETE 成功無回應內容。
-- `tripId`、`itemId` 為 UUID。格式不合法回傳 HTTP 400；格式合法但找不到資源回傳 HTTP 404。
+- `tripId`、`itemId` 為 UUID。格式不合法回傳 HTTP 400；完成適用的輸入格式及值驗證後，找不到資源才回傳 HTTP 404，依第 9 節的錯誤檢查順序處理。
 - API 使用 `tripId`、`itemId` 表示識別碼，分別對應 Entity 的 `Trip.id`、`PackingItem.id`；項目中的 `tripId` 對應 `PackingItem.trip_id`。其餘業務欄位沿用需求命名，例如 `is_packed`。
 - Request Schema 不接受未知欄位或 `null`；不做字串與數字／Boolean 之間的自動轉型。
-- 名稱及單位在儲存前去除前後空白，去除後不可空白；同名依去除前後空白後完全相同比對，不做同義詞或大小寫轉換。
+- 名稱及單位先去除兩端連續的一般空格（U+0020）、全形空白（U+3000）、Tab（U+0009）、CR（U+000D）、LF（U+000A），內部字元不變。正規化後名稱為 1～100、單位為 1～20 個 Unicode 碼點，再驗證及保存；不以原始輸入長度判定上限。數量為 1～999 的整數。同名依正規化後完全相同比對，不做同義詞或大小寫轉換。
 - GET 回傳目前完整清單，不分頁，也不保證項目順序。計畫存在但項目全數刪除時，回傳 HTTP 200 與空陣列。
 - 不設登入或授權機制；項目所屬計畫檢查屬資料一致性驗證，非使用者權限驗證。
 
@@ -64,6 +64,8 @@ Trip 與全部初始項目須作為一次完整建立操作；全部成功才回
 
 缺少 region、非法 Enum、錯誤型別、days 超出範圍、未知欄位或無法解析的 JSON 皆回傳 400。
 
+每次 POST `/trips` 都建立新的計畫，不依相同條件或重送自動去重。若保存成功但回應因連線問題未送達，計畫仍存在；逾時後重送可能建立另一筆計畫，不提供重送去重保證。這與保存失敗時不保留部分結果的原子性要求不同。
+
 ## 4. GET /trips/{tripId}/items：查詢目前清單
 
 Path Parameter：必填 `tripId`（UUID），無 Request Body。
@@ -84,9 +86,9 @@ Path Parameter：必填 `tripId`（UUID）。Request Body：`CreatePackingItemRe
 
 | 欄位 | 型別 | 規則 |
 | --- | --- | --- |
-| name | string | 必填，去除前後空白後非空，不得與同計畫項目同名 |
-| quantity | integer | 必填，至少 1 |
-| unit | string | 必填，去除前後空白後非空 |
+| name | string | 必填，正規化後 1～100 字元，不得與同計畫項目同名 |
+| quantity | integer | 必填，1～999 |
+| unit | string | 必填，正規化後 1～20 字元 |
 
 ```json
 {"name":"個人藥品","quantity":1,"unit":"份"}
@@ -96,15 +98,17 @@ HTTP 201 直接回傳 `PackingItem`，由系統產生 `itemId`，設定指定 `t
 
 缺漏、不合法值、同名或提供 `id`、`itemId`、`trip_id`、`tripId`、`reason`、`is_packed` 等非允許欄位皆回傳 400，不自動合併。計畫不存在回傳 404。
 
+同時新增同名項目只允許一筆成功，其餘名稱衝突回傳 `400 / DUPLICATE_ITEM_NAME`，不改成 500。手動新增請求重送時，依目前清單套用同名檢查，不保證回傳原項目。
+
 ## 6. PATCH /trips/{tripId}/items/{itemId}：修改內容或狀態
 
 Path Parameters：必填 `tripId`、`itemId`（UUID）。Request Body：`UpdatePackingItemRequest`，至少提供以下一個欄位：
 
 | 欄位 | 型別 | 規則 |
 | --- | --- | --- |
-| name | string | 去除前後空白後非空，不與另一項目同名 |
-| quantity | integer | 至少 1，可覆寫原建議數量 |
-| unit | string | 去除前後空白後非空 |
+| name | string | 正規化後 1～100 字元，不與另一項目同名 |
+| quantity | integer | 1～999，可覆寫原建議數量 |
+| unit | string | 正規化後 1～20 字元 |
 | is_packed | boolean | 僅接受 true、false |
 
 ```json
@@ -114,6 +118,8 @@ Path Parameters：必填 `tripId`、`itemId`（UUID）。Request Body：`UpdateP
 HTTP 200 直接回傳更新後的 `PackingItem`。只更新提供的欄位；未提供的欄位與原始原因保持不變。僅修改名稱、數量或單位時，不自動重設準備狀態；若提供 `is_packed`，則依輸入更新。系統不重新套用推薦覆寫修改結果。這是本專案的 JSON 部分更新格式，不採用 JSON Patch 操作陣列。
 
 空物件、未知／不可寫欄位、null、不合法型別或值、與另一項目同名皆回傳 400，整筆修改不生效。判斷同名時排除自身。計畫、項目不存在或項目不屬於指定計畫皆回傳 404。
+
+並行 PATCH 只寫入各請求提供的欄位：不同欄位的修改皆保留，同一欄位以後完成寫入的值覆蓋。不得使用讀取時的舊資料覆寫未提供欄位；同一請求的多欄位變更須全部成功或全部不生效。同時改名仍須保障名稱唯一，衝突回傳 `400 / DUPLICATE_ITEM_NAME`。不增加版本欄位或衝突 API。
 
 ## 7. DELETE /trips/{tripId}/items/{itemId}：刪除項目
 
@@ -160,10 +166,16 @@ UUID 格式不合法回傳 400；計畫不存在回傳 404；計畫存在但空�
 
 `message` 為可讀說明，不作為固定字串契約。請求驗證失敗不改動資料；建立計畫及 PATCH 分別遵守完整建立與整筆更新的要求。Schema 可驗證欄位形狀，跨項目同名、所屬計畫、推薦計算與進度一致性仍須由未來 Service 層依業務規則處理。
 
+OpenAPI 各共用錯誤 Response 以 `Error` 為基礎，再限制該回應允許的 code：一般 400 只接受 INVALID_REQUEST，項目新增／修改的 400 另接受 DUPLICATE_ITEM_NAME；計畫 404 只接受 TRIP_NOT_FOUND，項目操作 404 另接受 ITEM_NOT_FOUND；500 只接受 INTERNAL_ERROR。這些限制對應上表，不改變既有錯誤格式或新增狀態碼。
+
+錯誤檢查依序為：輸入格式及值（含正規化後的非空、長度）→ 計畫存在 → 項目存在及所屬 → 同名衝突 → 寫入。只執行操作需要的階段，首先失敗階段即回傳，不彙整全部錯誤；同階段內的欄位錯誤不規定先後。例如不存在的 tripId 搭配空白名稱，先回傳 `400 / INVALID_REQUEST`，而非 404。
+
 ## 10. 契約與驗證
 
 本文件與 OpenAPI 共用相同欄位及狀態碼。OpenAPI 使用獨立的 Create／Update Request Schema，避免將回應中的系統欄位誤作可寫欄位；回應中的 Trip、PackingItem、Progress 為資料表示，不增加 Entity。
 
+Request 的名稱／單位 Schema 保留含前後空白的原始輸入，不直接對原始值設 maxLength；正規化後的 100／20 字元上限由 Service 驗證。Response 使用已正規化且具 maxLength 的名稱／單位 Schema。兩者使用相同的最終長度規則。
+
 OpenAPI 格式依 [OpenAPI Specification 3.1.0](https://spec.openapis.org/oas/v3.1.0.html)。可將 [03-openapi.yaml](03-openapi.yaml) 匯入 Swagger Editor 檢視；本階段的文件檢查不代表已執行 API 或系統測試。
 
-本次已完成本地 YAML 解析、JSON Schema、所有本地參照與範例檢查，並核對推薦與進度資料、不合法輸入案例。尚未透過 Swagger Editor 或完整 OpenAPI 規格驗證器檢查。
+早期契約版本曾完成本地 YAML 解析、JSON Schema、參照、範例及不合法輸入案例檢查。後續修訂的檢查範圍依 AI Collaboration 各輪紀錄；不能將早期結果視為最新版已通過全部相同檢查。尚未透過 Swagger Editor 或完整 OpenAPI 規格驗證器檢查，也未執行系統測試。

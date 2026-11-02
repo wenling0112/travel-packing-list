@@ -173,6 +173,58 @@ AI 先核對現有 Requirements、API Design、OpenAPI 與作業規範，再撰�
 
 學生授權完成架構文件；目前尚無對本輪邏輯元件分工或架構圖的後續審閱紀錄，不將 AI 的設計選擇記成學生逐項提出或確認的內容。
 
+## 第八輪：確認實作歧義並補足最小規則
+
+### 學生原想法／Prompt
+
+學生要求根據 OpenAPI 與 Architecture／Data Model 檢查未來實作歧義，只列待確認事項，不生成程式碼或測試；之後要求修改建議。
+
+### AI 建議與學生判斷
+
+AI 列出並行修改、同時同名新增、POST 逾時重送、輸入大小、空白字元及多重錯誤順序六項，提出維持六條 API、兩個 Entity 的最小補充規則。學生先要求目前內容的 commit 訊息，待該階段之後才要求：「開始幫我根據檢查後的建議修改文件」。因此先前審查階段未修改規格，本輪依明確指示納入建議，不自行擴充新功能。
+
+### 文件結果
+
+- 並行 PATCH 保留不同欄位修改；同欄位以後完成寫入的值為準，不增加版本欄位。
+- 同時新增或改名仍維持名稱唯一，衝突回傳既有 400 / DUPLICATE_ITEM_NAME，不新增狀態碼。
+- POST /trips 每次視為新請求，不提供重送去重保證；區分保存失敗的原子性與已保存但回應未送達。
+- 名稱／單位正規化後上限為 100／20 字元、數量為 1～999 整數。文件將字元明確表示為 Unicode 碼點，屬此次契約具體化，未另記為學生逐字指定。
+- 明列去除兩端空白的五種字元，內部字元保持原樣。輸入長度在正規化後由 Service 驗證，回應 Schema 限制已保存值的長度，避免直接限制原始輸入造成矛盾。
+- 驗證依輸入、計畫、項目所屬、同名、寫入的順序，回傳首先失敗階段的錯誤，不要求彙整全部錯誤。
+- 同步更新 Requirements、API Design、OpenAPI、Architecture 與初步規劃，保留原 FR／BR 編號，不建立程式碼、測試或資料庫。
+
+## 第九輪：以 Reviewer 身分檢查跨文件一致性
+
+### 學生原想法／Prompt
+
+「幫我以 Reviewer 身分檢查文件間的名稱、欄位、狀態碼與業務規則是否矛盾；自行修正並記錄理由」。
+
+### 審查範圍與基準
+
+AI 檢查 README、Requirements、API Design、OpenAPI、Architecture & Data Model、AI Collaboration，以及 Repository 外的初步規劃。以已確認的六條 API、兩個 Entity、FR-01～FR-07、BR-01～BR-14 為基準，不增加功能或實作。
+
+### 發現、修正與理由
+
+| 發現 | 修正文件與內容 | 理由 |
+| --- | --- | --- |
+| 需求用 Entity 的 id／trip_id 描述不可寫欄位，API 使用 itemId／tripId，讀者可能誤以為 Path 也不能指定 tripId | Requirements 補明 Entity／API 名稱對應、Request Body 只允許欄位及 Path 仍必填 | 統一表示層的用語，保留既有識別碼映射，不改名或新增欄位 |
+| 共用 Error Schema 允許所有 code，個別 Response 未依已定義狀態碼限縮 | OpenAPI 在各錯誤 Response 以 allOf 加上 code 的 const／enum，API Design 同步說明 | 避免 400 回應在 Schema 上仍可帶 INTERNAL_ERROR 或 404 code；沿用既有格式及狀態碼 |
+| 回應名稱／單位的文字要求已正規化，但原 Schema 只驗證非空及長度 | OpenAPI 回應 Schema 增加兩端不得含指定空白的 pattern；輸入 Schema 仍接受前後空白 | 讓保存結果與回應契約符合 BR-12，又不把原始輸入誤當成已正規化資料；內部字元保持原樣 |
+| Repository 的職責概括為 Trip 與 PackingItem 皆有更新／刪除，超過現有 API 範圍 | Architecture 明列 Trip 僅建立／查詢，PackingItem 才支援部分更新／刪除 | 避免誤解為需實作修改或刪除 Trip，不擴充 Endpoint |
+| API 共通 UUID 說明未提醒其他輸入值可能先驗證失敗 | API Design 補明完成適用輸入驗證後，資源不存在才回傳 404 | 與 BR-14 的先輸入、再存在性檢查一致 |
+| README 只概述正整數；初步規劃主規則仍較寬泛，並留有舊的文件產出狀態 | README 同步已確認的數量、字串上限及完成率精度；初步規劃同步 BR-12、零到多項關聯、識別碼映射及六份文件已建立狀態 | 減少摘要、初步規格與正式契約之間的落差，不變更既定規則 |
+| API Design 的「本次已完成 YAML／Schema 檢查」可能讓讀者把早期驗證當成最新版結果 | 改為早期版本曾驗證，後續修訂依各輪實際紀錄 | 不將過往結果延伸為最新版已通過完整驗證 |
+
+### 檢查結果與限制
+
+文字核對確認六條操作的成功／錯誤狀態碼與 API Design 一致，FR-01～FR-07 均有操作支援，BR-01～BR-14 編號保留；Trip、PackingItem、ProgressResponse 欄位與架構映射一致，Progress 不另建 Entity。亦檢查全部本地參照及文件連結、各錯誤 Response 的 code 限制、回應空白 pattern 與 25 筆項目範例的欄位值。
+
+本輪是文件文字及正規表示式檢查，未重新執行完整 YAML／JSON Schema／OpenAPI 驗證，未視覺渲染 Mermaid，也未生成實作或測試檔案。先前的完整規格驗證待辦仍保留，不將檢查結果記為已通過系統測試。
+
+### 學生判斷與目前狀態
+
+學生明確授權自行修正並記錄理由，以上修正沿用已確認規則；目前尚無對本輪修正的後續回覆，不虛構逐項確認、commit 或 push 紀錄。
+
 ## 目前成果與待續紀錄
 
 目前六份設計文件皆已建立。架構文件依既有需求與契約整理，文件完成不代表已實作或通過系統測試。

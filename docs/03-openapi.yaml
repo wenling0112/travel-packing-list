@@ -8,6 +8,10 @@ info:
     不提供登入、外部 API、修改旅遊條件或重新推薦功能。
     簽證確認僅提醒自行確認需求，不代表系統判定是否需要簽證。
     Request 不接受未知欄位、null 或字串至數字／Boolean 的自動轉型。
+    名稱及單位先去除兩端連續的 U+0020、U+3000、U+0009、U+000D、U+000A，內部字元不變。
+    正規化後名稱為 1～100、單位為 1～20 個 Unicode 碼點，數量為 1～999 的整數。
+    驗證順序為輸入格式及值（含正規化後長度）、計畫存在、項目存在及所屬、同名衝突、寫入。
+    跳過不適用階段，回傳首先失敗階段的錯誤；同階段內欄位錯誤不規定先後，不彙整全部錯誤。
     格式不合法回傳 400，資源不存在或項目所屬計畫不符回傳 404。
     所有範例皆為模擬資料，未指定已部署的 Server。
 security: []
@@ -34,6 +38,8 @@ paths:
         簽證確認 1 項及旅行轉接插頭 1 個；兩種類型皆加充電器 1 個。
         簽證確認僅提醒使用者自行確認需求。相同物品只保留一筆，數量取最大值。
         Trip 與全部項目須一起建立；非預期失敗回傳 500，不保留部分建立結果。
+        每次 POST 都是新的建立請求，不提供重送去重保證；相同條件亦可建立不同計畫。
+        保存成功但回應未送達時結果仍保留，逾時重送可能建立另一筆計畫。
       requestBody:
         required: true
         content:
@@ -106,6 +112,9 @@ paths:
         同計畫名稱完全相同回傳 400，不自動合併。
         itemId 由系統產生、tripId 取自路徑，reason 固定為「使用者自行新增」，
         is_packed 固定為 false，這些欄位不可由 Request 指定。
+        名稱正規化後長度為 1～100、單位為 1～20 個 Unicode 碼點，quantity 為 1～999 整數。
+        同時新增同名項目只允許一筆成功，其餘衝突回傳 400 / DUPLICATE_ITEM_NAME，不回傳 500。
+        重送仍依目前清單做同名檢查，不自動回傳先前新增的項目。
       requestBody:
         required: true
         content:
@@ -144,6 +153,9 @@ paths:
         名稱及單位儲存前去除前後空白，同名檢查排除自身。
         僅修改名稱、數量或單位時，不自動重設準備狀態；若提供 is_packed，則依輸入更新。
         不修改 reason，不重新推薦或覆寫修改結果。
+        正規化後名稱為 1～100、單位為 1～20 個 Unicode 碼點，quantity 為 1～999 整數。
+        並行修改不同欄位時都保留；相同欄位以後完成寫入的值為準，不以舊整筆資料覆蓋未提供欄位。
+        同一請求的多欄位修改全部成功或全部不生效。同時改名仍維持名稱唯一，衝突為 400 / DUPLICATE_ITEM_NAME。
         驗證失敗整筆修改不生效；找不到項目或項目不屬於指定計畫回傳 404。
       requestBody:
         required: true
@@ -271,11 +283,32 @@ components:
     NonBlankText:
       type: string
       minLength: 1
-      pattern: '\S'
-      description: 至少含一個非空白字元；Service 儲存前去除前後空白
+      pattern: '[^ \u3000\t\r\n]'
+      description: 至少含一個不屬於指定去除集合的字元；集合為 U+0020、U+3000、U+0009、U+000D、U+000A
+    PackingItemNameInput:
+      allOf:
+        - $ref: '#/components/schemas/NonBlankText'
+      description: 原始名稱，可含前後空白；Service 先依指定集合去除兩端空白，再驗證長度為 1～100 個 Unicode 碼點，不以原始長度判斷上限
+    PackingItemUnitInput:
+      allOf:
+        - $ref: '#/components/schemas/NonBlankText'
+      description: 原始單位，可含前後空白；Service 先依指定集合去除兩端空白，再驗證長度為 1～20 個 Unicode 碼點，不以原始長度判斷上限
+    PackingItemName:
+      allOf:
+        - $ref: '#/components/schemas/NonBlankText'
+      maxLength: 100
+      pattern: '^[^ \u3000\t\r\n](?:[\s\S]*[^ \u3000\t\r\n])?(?![\s\S])'
+      description: 已去除指定前後空白的名稱，長度為 1～100 個 Unicode 碼點
+    PackingItemUnit:
+      allOf:
+        - $ref: '#/components/schemas/NonBlankText'
+      maxLength: 20
+      pattern: '^[^ \u3000\t\r\n](?:[\s\S]*[^ \u3000\t\r\n])?(?![\s\S])'
+      description: 已去除指定前後空白的單位，長度為 1～20 個 Unicode 碼點
     Quantity:
       type: integer
       minimum: 1
+      maximum: 999
       description: 目前數量；初始為推薦或手動新增數量，可由使用者修改
     CreateTripRequest:
       type: object
@@ -318,11 +351,11 @@ components:
           $ref: '#/components/schemas/Uuid'
           description: 對應 PackingItem.trip_id
         name:
-          $ref: '#/components/schemas/NonBlankText'
+          $ref: '#/components/schemas/PackingItemName'
         quantity:
           $ref: '#/components/schemas/Quantity'
         unit:
-          $ref: '#/components/schemas/NonBlankText'
+          $ref: '#/components/schemas/PackingItemUnit'
         reason:
           type: string
           minLength: 1
@@ -361,22 +394,22 @@ components:
       required: [name, quantity, unit]
       properties:
         name:
-          $ref: '#/components/schemas/NonBlankText'
+          $ref: '#/components/schemas/PackingItemNameInput'
         quantity:
           $ref: '#/components/schemas/Quantity'
         unit:
-          $ref: '#/components/schemas/NonBlankText'
+          $ref: '#/components/schemas/PackingItemUnitInput'
     UpdatePackingItemRequest:
       type: object
       additionalProperties: false
       minProperties: 1
       properties:
         name:
-          $ref: '#/components/schemas/NonBlankText'
+          $ref: '#/components/schemas/PackingItemNameInput'
         quantity:
           $ref: '#/components/schemas/Quantity'
         unit:
-          $ref: '#/components/schemas/NonBlankText'
+          $ref: '#/components/schemas/PackingItemUnitInput'
         is_packed:
           type: boolean
     ProgressResponse:
@@ -425,7 +458,11 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  code:
+                    const: INVALID_REQUEST
           examples:
             invalidRegion:
               summary: region 缺漏、null、型別錯誤或非法 Enum
@@ -437,7 +474,11 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  code:
+                    const: INVALID_REQUEST
           examples:
             invalidUuid:
               value: {code: INVALID_REQUEST, message: 路徑識別碼必須符合 UUID 格式}
@@ -446,10 +487,14 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  code:
+                    enum: [INVALID_REQUEST, DUPLICATE_ITEM_NAME]
           examples:
             invalidInput:
-              value: {code: INVALID_REQUEST, message: 名稱與單位不可空白，數量須為正整數；PATCH 至少提供一個允許欄位}
+              value: {code: INVALID_REQUEST, message: 名稱與單位正規化後須為 1～100 與 1～20 字元，數量須為 1～999 整數；PATCH 至少提供一個允許欄位}
             duplicateName:
               value: {code: DUPLICATE_ITEM_NAME, message: 此旅遊計畫已有同名物品}
             forbiddenField:
@@ -459,14 +504,22 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  code:
+                    const: TRIP_NOT_FOUND
           example: {code: TRIP_NOT_FOUND, message: 找不到指定旅遊計畫}
     ResourceNotFound:
       description: 計畫不存在，或項目不存在／不屬於指定計畫
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  code:
+                    enum: [TRIP_NOT_FOUND, ITEM_NOT_FOUND]
           examples:
             tripMissing:
               value: {code: TRIP_NOT_FOUND, message: 找不到指定旅遊計畫}
@@ -477,7 +530,11 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Error'
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - properties:
+                  code:
+                    const: INTERNAL_ERROR
           example: {code: INTERNAL_ERROR, message: 系統暫時無法完成操作}
   examples:
     ManualItem:

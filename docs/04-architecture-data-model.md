@@ -28,11 +28,13 @@ Client 提供旅遊條件與清單調整內容；Server 依序處理請求驗證
 | --- | --- |
 | Router：TripRouter、PackingItemRouter、ProgressRouter | 接收對應 API；驗證 JSON、Path UUID、必填欄位、型別、Enum、數值範圍及允許欄位；PATCH 至少有一個可寫欄位。將輸入交給 Service，依結果回傳既定 HTTP 狀態碼與 Response Schema。 |
 | Service：TripService | 驗證旅遊條件，依 BR-04、BR-05、BR-11 產生初始物品，依 BR-06 去重取最大數量，設定初始狀態，協調 Trip 與全部項目的完整建立。 |
-| Service：PackingItemService | 確認計畫存在及項目所屬；名稱與單位去除前後空白後驗證；檢查同名；處理新增、部分修改與刪除。依 BR-12～BR-14 保護不可寫欄位、保留原始原因，且不重新推薦。 |
+| Service：PackingItemService | 先正規化並驗證名稱與單位，再確認計畫存在及項目所屬、檢查同名；處理新增、部分修改與刪除。依 BR-12～BR-14 保護不可寫欄位、保留原始原因，且不重新推薦。 |
 | Service：ProgressService | 確認計畫存在，取得目前清單，依 BR-08 計算各項數量、完成率與未準備物品；完成率四捨五入至小數點後兩位。 |
-| Repository | 提供 Trip 與 PackingItem 的查詢、新增、更新及刪除存取；支援以指定 tripId 篩選及同名檢查所需查詢；提供完整建立與整筆更新所需的寫入保證。不決定推薦內容、數量公式或完成率。 |
+| Repository | 提供 Trip 的建立與查詢，以及 PackingItem 的查詢、新增、部分欄位更新及刪除存取；不提供修改或刪除 Trip 的操作。支援以指定 tripId 篩選及同名檢查所需查詢，保障完整建立及單次 PATCH 變更的原子性。不決定推薦內容、數量公式或完成率。 |
 
 Router 驗證可依 OpenAPI 判斷的輸入格式；Service 負責需讀取資料或結合業務情境的規則。像同名、項目所屬計畫、推薦結果及進度計算，不能僅靠 Request Schema 驗證。
+
+驗證順序固定為：輸入格式及值（含 Service 正規化後的非空、長度）→ 計畫存在 → 項目存在及所屬 → 同名衝突 → 寫入。跳過操作不適用階段，首先失敗階段即回傳，不彙整全部錯誤；同階段內欄位錯誤不指定先後。即使計畫不存在，若名稱正規化後不合法，先回傳 400。
 
 回應組裝時使用 API 欄位名稱，Entity 的識別碼映射見第 5 節。錯誤以既有 `Error` Schema 表示：
 
@@ -88,19 +90,25 @@ sequenceDiagram
 5. Repository 完整保存一筆 Trip 與全部初始項目。未來儲存實作必須提供原子性：全部成功或全部不保留，不可出現只有計畫或部分項目的成功結果。本文件不指定交易技術或資料庫。
 6. 全部成功後才回傳 201，內容為 `{trip, items}`；格式驗證失敗回傳 400，非預期處理失敗回傳 500。
 
+每次 POST `/trips` 都視為新建立，不提供重送去重保證。保存成功但回應未送達時仍保留計畫，逾時重送可能新增另一筆；原子性保證的是保存結果完整，不保證回應送達或重送只建立一次。
+
 ## 4. 清單調整與進度查詢流程
 
 | 操作 | Router → Service → Repository 的處理 | 成功回應 |
 | --- | --- | --- |
 | GET `/trips/{tripId}/items` | PackingItemRouter 驗證 UUID；PackingItemService 確認計畫，透過 Repository 取得目前全部項目；不重新推薦。 | 200 ItemListResponse |
-| POST `/trips/{tripId}/items` | 驗證 CreatePackingItemRequest；Service 確認計畫，去除前後空白並驗證、檢查同名，設定系統欄位後保存新項目。 | 201 PackingItem |
-| PATCH `/trips/{tripId}/items/{itemId}` | 驗證 UpdatePackingItemRequest；Service 確認項目所屬，檢查欄位及同名（排除自身），只套用提供的欄位，驗證全數成功才整筆保存。 | 200 PackingItem |
+| POST `/trips/{tripId}/items` | 驗證 CreatePackingItemRequest；Service 先去除前後空白並驗證，再確認計畫、檢查同名，設定系統欄位後保存新項目。 | 201 PackingItem |
+| PATCH `/trips/{tripId}/items/{itemId}` | 驗證 UpdatePackingItemRequest；Service 先正規化並驗證輸入，再確認計畫與項目所屬、檢查同名（排除自身），只寫入提供的欄位，單次請求變更全部成功或全部不生效。 | 200 PackingItem |
 | DELETE `/trips/{tripId}/items/{itemId}` | 驗證 UUID；Service 確認計畫與項目所屬，由 Repository 刪除；不補回推薦、不提供復原。 | 204，無回應內容 |
 | GET `/trips/{tripId}/progress` | ProgressRouter 驗證 UUID；ProgressService 確認計畫，從 Repository 取得同一份目前清單，再計算計數與未準備項目。 | 200 ProgressResponse |
 
 新增由 Service 設定 `reason = 使用者自行新增`、`is_packed = false`，識別碼與所屬計畫不可由 Request Body 指定。修改保留原始 reason；只改名稱、數量或單位時保留準備狀態，若提供 is_packed 則依輸入更新。所有項目皆可修改或刪除，包括系統推薦文件。
 
 驗證失敗不部分修改資料；項目不存在或所屬計畫不符回傳 404，不操作其他計畫的項目。同名檢查與保存須維持 BR-12 的同計畫名稱唯一性，具體儲存機制留待實作，不增加 API。
+
+Repository 必須保證並行操作的結果也符合規則：同時新增同名物品只允許一筆成功，同時改名亦不可產生重複；名稱衝突由 Service 轉為 `400 / DUPLICATE_ITEM_NAME`，不得因保存時才發現衝突就改回 500。手動新增重送同樣依目前名稱檢查，不提供回傳原項目的保證。
+
+並行 PATCH 僅寫入各請求提供的欄位，不以舊整筆資料覆寫未提供欄位。不同欄位的修改都保留，同欄位由後完成寫入的值覆蓋；同一請求多欄位變更全部成功或全部不生效，名稱唯一性仍須成立。具體交易、鎖定或儲存技術留待實作，不新增版本欄位或衝突 API。
 
 ## 5. Data Model
 
@@ -126,15 +134,17 @@ Trip 條件在建立時決定，本階段不提供修改或依新條件重新產
 | --- | --- | --- | --- |
 | id | UUID | PK，系統產生 | itemId；項目識別碼 |
 | trip_id | UUID | FK → Trip.id | tripId；所屬計畫，不可由使用者改動 |
-| name | String | 去除前後空白後非空，同計畫不可同名 | name；目前物品名稱 |
-| quantity | Integer | 正整數 | quantity；初始為建議或手動新增數量，後續可覆寫 |
-| unit | String | 去除前後空白後非空 | unit；例如件、套、張、本、項、個、份 |
+| name | String | 正規化後 1～100 個 Unicode 碼點，同計畫不可同名 | name；目前物品名稱 |
+| quantity | Integer | 1～999 的整數 | quantity；初始為建議或手動新增數量，後續可覆寫 |
+| unit | String | 正規化後 1～20 個 Unicode 碼點 | unit；例如件、套、張、本、項、個、份 |
 | reason | String | 非空，系統設定、修改時保留 | reason；原始推薦依據或「使用者自行新增」 |
 | is_packed | Boolean | 新項目初始 false，後續可改為 true 或 false | is_packed；目前準備狀態 |
 
 reason 表示項目最初的推薦或新增依據；即使使用者改名或修改數量，仍保留原始原因，不重新計算推薦。不另存原建議數量、來源欄位或歷史版本。
 
 名稱唯一性範圍是同一個 trip_id，依去除前後空白後完全相同比對，不做大小寫或同義詞轉換。不同計畫可以有同名項目。初始推薦依 BR-06 合併取最大數量；手動同名操作依 BR-12 拒絕，不自動合併。
+
+正規化只去除兩端連續的一般空格（U+0020）、全形空白（U+3000）、Tab（U+0009）、CR（U+000D）、LF（U+000A），內部字元保持原樣，儲存去除後的值。先正規化再驗證非空及長度，並使用相同結果做同名判定。Request Schema 不直接限制原始輸入的 maxLength，正規化後的長度由 Service 驗證；Response 名稱／單位 Schema 限制保存結果為 100／20 字元以內。
 
 ### 5.3 Relationship 與識別碼映射
 
