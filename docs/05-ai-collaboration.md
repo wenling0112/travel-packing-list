@@ -152,8 +152,29 @@ AI 建議保留現有六條 API、兩個 Entity、識別碼命名、回應包裝
 - 初步規劃同步 BR-08 與 FR-04，保留既有編號。
 - README 無需調整；沒有新增功能、Endpoint、Entity 或實作程式。
 
+## 第七輪：完成架構與資料模型設計
+
+### 學生原想法／Prompt
+
+「幫我完成最後的04-architecture-data-model.md」。
+
+### AI 的設計與文件結果
+
+AI 先核對現有 Requirements、API Design、OpenAPI 與作業規範，再撰寫分層架構、建立計畫的 Request Flow、兩個 Entity 的欄位及 FR → API → Schema → Component → Entity 追蹤表。
+
+- 將格式驗證、業務規則及資料存取分配至 Router、Service、Repository，元件名稱僅為邏輯設計。
+- 沿用六條 API、兩個 Entity、識別碼映射及完成率精度，不增加需求規則或資料欄位。
+- 以 Trip 對零到多筆 PackingItem 表達使用者可以刪除全部項目的既有需求；初始建立仍須完整產生推薦。
+- 將 ProgressResponse 說明為由目前清單計算的衍生回應，不建立 Progress Entity。
+- 同步更新 README 與需求文件的架構連結及撰寫狀態。
+- 以 OpenAPI 文字核對六條操作、Schema 名稱與 Entity／API 欄位映射，並檢查全部 FR 的追蹤、文件連結及 Markdown／Mermaid 區塊結構；未進行圖表視覺渲染或系統測試。
+
+### 學生判斷與目前狀態
+
+學生授權完成架構文件；目前尚無對本輪邏輯元件分工或架構圖的後續審閱紀錄，不將 AI 的設計選擇記成學生逐項提出或確認的內容。
+
 ## 目前成果與待續紀錄
 
-目前已撰寫 README、Requirements、API Design、OpenAPI 與本協作紀錄。Architecture & Data Model 尚未建立，因此不宣稱已完成六份文件的全面審查。
+目前六份設計文件皆已建立。架構文件依既有需求與契約整理，文件完成不代表已實作或通過系統測試。
 
-後續完成其餘設計文件後，再依實際發生的審查補充 FR、API、Schema、Component 與 Entity 的對應結果，以及學生實際採納或修正的決策。
+後續依實際發生的審查，繼續補充跨文件對應結果與學生採納或修正的決策；OpenAPI 尚未透過 Swagger Editor 或完整規格驗證器檢查的狀態仍保留，不虛構驗證成果。
